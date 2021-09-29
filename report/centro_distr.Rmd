@@ -1,0 +1,104 @@
+---
+title: "Melhor localização para um centro de distribuição"
+subtitle: "Versão 0.1"
+output: 
+  html_document:
+    theme: united
+---
+
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  message = F,
+  error = F,
+  warning = F,  fig.align = "center",
+  echo = F
+)
+```
+
+
+```{css, echo=FALSE}
+p {
+text-align: justify;
+
+}
+.title{
+text-align: center;
+  font-weight: bold;
+}
+.subtitle{
+  text-align: center;
+  font-style: italic
+}
+.leaflet{
+  width:100%
+}
+
+```
+Planejar uma política de segurança alimentar e nutricional (SAN) requer pensar toda a cadeia que leva da produção até o consumo. Uma maneira de torná-la mais eficaz é reduzir o tempo e os custos de transporte dos alimentos das unidades produtoras até as unidades distribuidoras. Surge, então, o problema de alocação de recursos. Onde deveria se localizar uma unidade de distribuição que minimizasse as distâncias entre os locais em que se produzem os alimentos e os locais onde eles são distribuídos ao consumidor?
+
+Uma das maneiras de responder esta pergunta é através do cálculo do centro jordaniano: o ponto em uma rede que minimiza as distâncias entre todos os outros pontos. Para achá-lo, construímos um banco de dados com as coordenadas de latitude e longitude de todas as unidades agrícolas de Campos dos Goytacazes, RJ. Incluímos também todas as escolas da cidade, feiras livres e supermercados. As coordenadas das unidades agrícolas foram retiradas do [Cadastro Nacional de Endereços para Fins Estatísticos](https://www.ibge.gov.br/estatisticas/economicas/agricultura-e-pecuaria/21814-2017-censo-agropecuario.html?=&t=downloads) que o IBGE utilizou na realização do censo agropecuário de 2017. Conforme a [definição do Instituto](https://www.ibge.gov.br/estatisticas/economicas/agricultura-e-pecuaria/21814-2017-censo-agropecuario.html?=&t=o-que-e), unidades agrícolas são estabelecimentos cuja "...produção [é] dedicada, total ou parcialmente, a atividades agropecuárias, florestais ou aquícolas, subordinada a uma única administração (produtor ou administrador), independentemente de seu tamanho, de sua forma jurídica ou de sua localização, com o objetivo de produção para subsistência ou para venda". As coordenadas das escolas, conseguimos pelo [catálogo nacional](https://inepdata.inep.gov.br/analytics/saw.dll?dashboard) que o INEP produz e disponibiliza via internet. Para os supermercados, realizamos uma consulta à API [*google places*](https://developers.google.com/maps/documentation/places/web-service/overview), solicitando todos os estabelecimentos do tipo "supermercado" em Campos dos Goytacazes. Os endereços das feiras livres, conhecidas como feiras da roça, foram levantadas pela bolsista da UENF Lohana Chagas.
+
+```{r setup, echo = F}
+library(agricampos)
+library(tidyverse)
+library(sf)
+library(tmap)
+library(scales)
+data("bd")
+campos <- sf::read_sf("C:/Users/David/OneDrive/Documentos/projetos/agricampos/data-raw/33MUE250GC_SIR.shp") %>% 
+  filter(NM_MUNICIP == "CAMPOS DOS GOYTACAZES") %>% 
+  st_union()
+#fronteiras de campos
+fronteiras <- st_geometry(campos) %>% 
+  st_cast("LINESTRING")
+#centroid
+centroide <- st_centroid(campos)
+n_uas <- bd %>% filter(tipo == "unidade agrícola") %>% nrow()
+n_esc <- bd %>% filter(tipo == "escola") %>% nrow()
+n_merc <- bd %>% filter(tipo == "mercado") %>% nrow()
+n_feiras <- bd %>% filter(tipo == "feira livre") %>% nrow()
+
+```
+
+Ao todo, conseguimos as coordenadas de `r agricampos:::fr(n_uas)` unidades agrícolas, `r agricampos:::fr(n_esc)` escolas, `r n_merc` supermercados e `r n_feiras` feiras livres, que podem ser vistas no mapa abaixo. É possível notar a predominâncias de unidades agrícolas, que se disseminam por todo o município, enquanto as escolas, feiras e supermercados, em menor número, concentram-se na área mais urbanizada, próximo à sede do município.
+
+```{r, width = 40, height = 30}
+bd <- sf::st_as_sf(bd, coords = c("lng","lat"),
+                   crs = "4674")
+st_crs(bd) <- 4674
+tmap_mode("view")
+tm_shape(bd) + tm_dots(col = "tipo", palette = "Set1", alpha = 0.7) +
+  tm_shape(campos) + tm_borders(col = "white") + tm_basemap(providers$Esri.WorldImagery)
+```
+
+Com base nessas informações, podemos ensaiar uma primeira abordagem para responder ao problema de localização pelo cálculo do centro jordaniano. Para isso, vamos classificar as unidades agrícolas como **unidades produtas** e todos os outros tipos de estabelecimento como **unidades distribuidoras.** Apesar de a definição do IBGE englobar estabelecimentos rurais que produzem para subsistência, apenas 641 dos `r agricampos:::fr(n_uas)` localizados em Campos dos Goytacazes, afirmaram que é esta a [principal finalidade](https://sidra.ibge.gov.br/tabela/6762) do que produzem. O passo seguinte requer calular as menores distâncias entre todas as unidades produtoras e todas a unidades distribuidoras. Depois deste cálculo, retiramos, de cada unidade produtora, a maior distância até um estabecimento de distribuição. A unidade produtora com a menor destas maiores distâncias pode ser considerada o centro jordaniano. No mapa abaixo, ele aparece com um marcador preto. Em torno dele, plotamos também um *buffer* de 2km de raio, área na qual poderia vir a ser construído uma central de distribuição de alimentos que minimizasse as distâncias entre as unidades produtoras e as distribuidoras.
+
+```{r}
+#unidades agricolas 
+uas <- bd %>% filter(tipo == "unidade agrícola")  
+  
+
+# outros estabelecimentos
+outros <- bd %>% filter(tipo != "unidade agrícola")
+
+#menores distancias 
+dists <- st_distance(uas, outros)
+
+#eccentricidades
+ecc <- apply(dists, 1, max) %>% 
+  sort(decreasing = F, index.return = T)
+
+#centro jordaniano
+jordan <- uas %>% slice(ecc$ix[1])
+
+#buffer 
+buff <- st_buffer(jordan, 2000) 
+ tm_shape(buff) + tm_polygons(col = "lightblue", alpha = 0.3) +
+tm_shape(bd) + tm_dots(col = "tipo", palette = "Set1", alpha = 0.8) +
+   tm_shape(jordan) + tm_dots(col = "black")+
+  tm_shape(campos) + tm_borders(col = "white") + tm_basemap(providers$Esri.WorldImagery) 
+  
+```
+
+A abordagem aqui ensaiada pode ser aprimorada e/ou modificada de inúmeras maneiras. A primeira delas seria coletar mais dados acerca de outras unidades de distribuição. A segundo é considerar como centro jordaniano não a unidade produtora, mas uma unidade distribuidora. A terceira envolve desconsiderar a diferença entre unidades produtoras e distribuidoras, calculando a distância entre todas as unidades, independente do tipo. Nesta hipótese, teríamos um custo computacional mais alto. No exemplo aqui trabalhado, tivemos que calcular as distâncias de `r agricampos:::fr(4149938)` de pares produtores x distribuidores. Se desconsiderássemos a diferença, o número de distâncias a serem calculadas subiria para `r agricampos:::fr(34602880)` - nada impossível de se fazer com um computador não tão potente, caso programado da maneira correta. Em quarto, a estimação ficaria mais precisa se pudéssemos ter acesso aos microdados do IBGE e separar as unidades agrícolas que produzem para substistência daquelas que produzem para venda. No entanto, como tais tipos de informações são sigilosas, é improvável que consigamos acessá-las se recorrer à [Sala de Acesso a Dados Restritos](https://www.ibge.gov.br/acesso-informacao/sala-de-acesso-a-dados-restritos.html), o que requer algum trâmite burocrátio. Em quinto e último, aqui utilizamos a [distância de grande círculo](https://pt.wikipedia.org/wiki/C%C3%ADrculo_m%C3%A1ximo), que é o tipo de distância calculada para sistemas de coordenadas não projetados como o SIRGAS 2000, que é o usado em nossa base. Uma estimação mais precisa seria calcular não a distância de grande círculo, mas a distância dos percursos e caminhos disponíveis entre uma unidade e outra. Neste caso, necessitaríamos de mais tempo e recursos econômicos, uma vez que precisaríamos efetuar uma consulta para cada par de unidades na API [*google directions*](https://developers.google.com/maps/documentation/directions/overview) a qual, [cobra](https://developers.google.com/maps/documentation/directions/usage-and-billing) \$ 8,00 por cada consulta.

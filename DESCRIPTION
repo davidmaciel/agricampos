@@ -19,8 +19,8 @@ Depends:
 Suggests: 
     rmarkdown,
     knitr
-VignetteBuilder: knitr
 Imports: 
     sf,
     dplyr,
-    qpdf
+    qpdf,
+    scales

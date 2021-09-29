@@ -77,7 +77,8 @@ esc <- esc %>%
   filter(between(lon, -41.7, -41)) %>%
   rename("lng" = lon)
 bd <- bind_rows(ua, esc, mercados, feiras) %>% select(-endereco, -address) %>%
-  filter(!is.na(lng))
+  filter(!is.na(lng)) %>%
+  mutate(id = 1:nrow(.))
 Encoding(bd$nome) <- "latin1"
 Encoding(bd$tipo) <- "latin1"
 bd$nome <- iconv(bd$nome, "latin1", "UTF-8")
